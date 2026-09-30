@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEBCO 2026 Bathymetry</title>
+  <!-- Include the CesiumJS JavaScript and CSS files -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.145/Build/Cesium/Cesium.js"></script>
+  <!-- Local config with the Cesium ion token (git-ignored, copy from config.example.js) -->
+  <script src="config.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.145/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    .panel {
+      position: absolute; padding: 8px 10px; background: rgba(30, 30, 30, 0.85);
+      color: #fff; font: 12px sans-serif; border-radius: 4px;
+    }
+    #legend { top: 50px; left: 10px; width: 240px; max-height: calc(100% - 140px); overflow-y: auto; }
+    #legend h3 { margin: 0 0 8px; font-size: 13px; }
+    #legend .scale { display: grid; grid-template-columns: 18px auto; column-gap: 8px; }
+    #legend .bar { height: 220px; }
+    #legend .labels { display: flex; flex-direction: column; justify-content: space-between; }
+    #legend .controls { margin-top: 10px; border-top: 1px solid #555; padding-top: 8px; display: grid; gap: 6px; }
+    #legend label { display: flex; align-items: center; gap: 6px; }
+    #legend label > span:first-child { width: 78px; flex: none; }
+    #legend input[type=range] { flex: 1; min-width: 0; }
+    #legend input[type=number] { width: 64px; }
+    #legend select { flex: 1; }
+    #legend .note { color: #aaa; font-size: 11px; margin-top: 8px; }
+    #info { bottom: 40px; left: 10px; min-width: 240px; display: none; }
+    #info b { color: #9cf; }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <div id="legend" class="panel">
+    <h3>GEBCO 2026 – Depth</h3>
+    <div class="scale">
+      <div class="bar"></div>
+      <div class="labels"></div>
+    </div>
+    <div class="controls">
+      <label><span>Range</span>
+        <select id="preset">
+          <option value="-8000,0">Full ocean (−8000…0 m)</option>
+          <option value="-4000,0">Deep sea (−4000…0 m)</option>
+          <option value="-1000,0">Slope (−1000…0 m)</option>
+          <option value="-200,0">Shelf (−200…0 m)</option>
+          <option value="-50,0">Coastal (−50…0 m)</option>
+          <option value="-50,-25" selected>Nearshore (−50…−25 m)</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+      <label><span>Min / max (m)</span>
+        <input type="number" id="minH" step="5" value="-50"> <input type="number" id="maxH" step="5" value="-25">
+      </label>
+      <label><span>Colour map</span>
+        <select id="cmap">
+          <option value="turbo">Turbo (inverted)</option>
+          <option value="turbo_qgis" selected>Turbo (QGIS)</option>
+          <option value="blues">Blues</option>
+          <option value="viridis">Viridis</option>
+        </select>
+      </label>
+      <label><span>Land</span>
+        <select id="land">
+          <option value="transparent" selected>Transparent (base map)</option>
+          <option value="grey">Grey hillshade</option>
+        </select>
+      </label>
+      <label><span>Hillshade</span><input type="range" id="shade" min="0" max="1" step="0.05" value="0.6"></label>
+      <label><span>Opacity</span><input type="range" id="opacity" min="0" max="1" step="0.05" value="1"></label>
+      <label><span>Vertical exag.</span><input type="range" id="exag" min="1" max="30" step="1" value="3"><span id="exagVal">3×</span></label>
+      <label><input type="checkbox" id="showDepth" checked> Show depth layer</label>
+    </div>
+    <div class="note">Terrain and colours are both from GEBCO_2026 (sub-ice version). Heights outside the range are clamped to the end colours. Click the globe to query the depth.</div>
+  </div>
+  <div id="info" class="panel"></div>
+  <script type="module">
+    // Cesium ion token comes from config.js (not in git) - see README.md.
+    if (!window.CESIUM_ION_TOKEN) alert('Missing config.js with CESIUM_ION_TOKEN - see README.md.');
+    Cesium.Ion.defaultAccessToken = window.CESIUM_ION_TOKEN;
+
+    // Tiles are generated from gebco_2026_sub_ice_topo_geotiff/ by build_topo_tiles.py.
+    // Each tile holds 257x257 heights at cell corners, encoded as height = R*256 + G - 32768.
+    const TILE_ROOT = 'tiles/gebco_topo';
+    const meta = await (await fetch(`${TILE_ROOT}/meta.json`)).json();
+    const MAX = meta.maxLevel;
+    const S = meta.samples;            // 257 samples per tile side
+    const CELLS = S - 1;               // 256 cells per tile side
+
+    // ---- Height tile loading (LRU cache of decoded Int16 grids) -------------------------------
+    const cache = new Map();
+    const CACHE_SIZE = 800;            // ≈ 800 × 132 kB
+    const decodeCanvas = document.createElement('canvas');
+    decodeCanvas.width = decodeCanvas.height = S;
+    const decodeCtx = decodeCanvas.getContext('2d', { willReadFrequently: true });
+
+    function getTile(level, x, y) {
+      const key = `${level}/${x}/${y}`;
+      let p = cache.get(key);
+      if (p) { cache.delete(key); cache.set(key, p); return p; }
+      p = (async () => {
+        const blob = await (await fetch(`${TILE_ROOT}/${key}.png`)).blob();
+        const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+        decodeCtx.drawImage(bmp, 0, 0);
+        const px = decodeCtx.getImageData(0, 0, S, S).data;
+        const h = new Int16Array(S * S);
+        for (let i = 0; i < h.length; i++) h[i] = px[i * 4] * 256 + px[i * 4 + 1] - meta.offset;
+        return h;
+      })();
+      p.catch(() => cache.delete(key));
+      cache.set(key, p);
+      if (cache.size > CACHE_SIZE) cache.delete(cache.keys().next().value);
+      return p;
+    }
+
+    // n x n heights covering tile (x, y, level). Beyond MAX the finest ancestor is bilinearly upsampled.
+    async function heightsFor(x, y, level, n) {
+      const d = Math.max(0, level - MAX);
+      const ax = Math.floor(x / 2 ** d), ay = Math.floor(y / 2 ** d);
+      const H = await getTile(level - d, ax, ay);
+      const span = CELLS / 2 ** d;
+      const ox = (x - ax * 2 ** d) * span, oy = (y - ay * 2 ** d) * span;
+      const step = span / (n - 1);
+      const out = new Float32Array(n * n);
+      for (let j = 0; j < n; j++) {
+        const v = oy + j * step, j0 = Math.min(Math.floor(v), S - 2), fv = v - j0;
+        for (let i = 0; i < n; i++) {
+          const u = ox + i * step, i0 = Math.min(Math.floor(u), S - 2), fu = u - i0;
+          const k = j0 * S + i0;
+          const top = H[k] + (H[k + 1] - H[k]) * fu;
+          const bot = H[k + S] + (H[k + S + 1] - H[k + S]) * fu;
+          out[j * n + i] = top + (bot - top) * fv;
+        }
+      }
+      return out;
+    }
+
+    async function heightAt(lon, lat) {
+      const span = 180 / 2 ** MAX;
+      const fx = (lon + 180) / span, fy = (90 - lat) / span;
+      const x = Math.min(Math.floor(fx), 2 ** (MAX + 1) - 1), y = Math.min(Math.floor(fy), 2 ** MAX - 1);
+      const H = await getTile(MAX, x, y);
+      const u = (fx - x) * CELLS, v = (fy - y) * CELLS;
+      const i0 = Math.min(Math.floor(u), S - 2), j0 = Math.min(Math.floor(v), S - 2);
+      const fu = u - i0, fv = v - j0, k = j0 * S + i0;
+      const top = H[k] + (H[k + 1] - H[k]) * fu, bot = H[k + S] + (H[k + S + 1] - H[k + S]) * fu;
+      return top + (bot - top) * fv;
+    }
+
+    // ---- Viewer with GEBCO terrain ------------------------------------------------------------
+    const credit = new Cesium.Credit(meta.attribution);
+    const terrainProvider = new Cesium.CustomHeightmapTerrainProvider({
+      width: 65,
+      height: 65,
+      callback: (x, y, level) => heightsFor(x, y, level, 65),
+      credit,
+    });
+
+    const viewer = new Cesium.Viewer('cesiumContainer', { terrainProvider });
+    const scene = viewer.scene;
+    scene.verticalExaggeration = 3.0;
+    scene.globe.depthTestAgainstTerrain = true;
+    scene.screenSpaceCameraController.enableCollisionDetection = true;
+
+    // ---- Colour maps: t = 0 deepest (min) … 1 shallowest (max) --------------------------------
+    // Turbo polynomial approximation (Mikhailov, Google AI 2019), inverted as in index.html.
+    function turbo(t) {
+      const t2 = t * t, t3 = t2 * t, t4 = t3 * t, t5 = t4 * t;
+      return [
+        0.13572138 + 4.61539260 * t - 42.66032258 * t2 + 132.13108234 * t3 - 152.94239396 * t4 + 59.28637943 * t5,
+        0.09140261 + 2.19418839 * t + 4.84296658 * t2 - 14.18503333 * t3 + 4.27729857 * t4 + 2.82956604 * t5,
+        0.10667330 + 12.64194608 * t - 60.58204836 * t2 + 110.36276771 * t3 - 89.90310912 * t4 + 27.34824973 * t5,
+      ].map((c) => Math.round(Cesium.Math.clamp(c, 0, 1) * 255));
+    }
+    function stops(list) {
+      const rgb = list.map((h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)));
+      return (t) => {
+        const f = t * (rgb.length - 1), i = Math.min(Math.floor(f), rgb.length - 2), w = f - i;
+        return rgb[i].map((c, k) => Math.round(c + (rgb[i + 1][k] - c) * w));
+      };
+    }
+    const COLORMAPS = {
+      turbo: (t) => turbo(1 - t),
+      // Starts at t = 0.1 to skip Turbo's near-black violet tail, so the deep end is ocean blue.
+      turbo_qgis: (t) => turbo(0.1 + 0.9 * t),
+      blues: stops(['#0d3f82', '#1666b0', '#3182bd', '#6baed6', '#c6dbef', '#eef6fc']),
+      viridis: stops(['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725']),
+    };
+    const LUT_SIZE = 1024;
+    function buildLut(name) {
+      const lut = new Uint8Array(LUT_SIZE * 3);
+      for (let i = 0; i < LUT_SIZE; i++) lut.set(COLORMAPS[name](i / (LUT_SIZE - 1)), i * 3);
+      return lut;
+    }
+
+    // ---- Depth imagery rendered in the browser from the height tiles --------------------------
+    const LIGHT = [-0.5, 0.5, Math.SQRT1_2];     // sun from NW (azimuth 315°), 45° elevation
+
+    async function renderTile(x, y, level, s) {
+      const H = await heightsFor(x, y, level, S);
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = CELLS;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(CELLS, CELLS);
+      const px = img.data;
+
+      const tileDeg = 180 / 2 ** level, cellDeg = tileDeg / CELLS;
+      const north = 90 - y * tileDeg;
+      const dy = cellDeg * 110574;
+      const range = s.maxH - s.minH;
+      for (let j = 0; j < CELLS; j++) {
+        const lat = north - (j + 0.5) * cellDeg;
+        const dx = Math.max(cellDeg * 111320 * Math.cos(Cesium.Math.toRadians(lat)), 1);
+        // Slopes are exaggerated more at coarse levels so relief stays readable when zoomed out.
+        const zf = 4 * Math.sqrt(Math.sqrt(dx * dy) / 460);
+        for (let i = 0; i < CELLS; i++) {
+          const k = j * S + i;
+          const h00 = H[k], h10 = H[k + 1], h01 = H[k + S], h11 = H[k + S + 1];
+          const h = (h00 + h10 + h01 + h11) * 0.25;
+          const o = (j * CELLS + i) * 4;
+          if (h >= 0 && s.land === 'transparent') { px[o + 3] = 0; continue; }
+
+          const gx = ((h10 + h11) - (h00 + h01)) / (2 * dx) * zf;
+          const gy = ((h00 + h10) - (h01 + h11)) / (2 * dy) * zf;
+          const lambert = Math.max(0, -gx * LIGHT[0] - gy * LIGHT[1] + LIGHT[2]) / Math.sqrt(gx * gx + gy * gy + 1);
+          const shade = Math.min(1.4, 1 + s.shade * (lambert / LIGHT[2] - 1));
+
+          let r, g, b;
+          if (h >= 0) {
+            r = g = b = 200;
+          } else {
+            const t = Cesium.Math.clamp((h - s.minH) / range, 0, 1);
+            const li = Math.round(t * (LUT_SIZE - 1)) * 3;
+            r = s.lut[li]; g = s.lut[li + 1]; b = s.lut[li + 2];
+          }
+          px[o] = r * shade; px[o + 1] = g * shade; px[o + 2] = b * shade; px[o + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      return canvas;
+    }
+
+    const ui = Object.fromEntries(['preset', 'minH', 'maxH', 'cmap', 'land', 'shade', 'opacity', 'exag', 'exagVal', 'showDepth']
+      .map((id) => [id, document.getElementById(id)]));
+
+    function settings() {
+      let minH = Number(ui.minH.value), maxH = Number(ui.maxH.value);
+      if (!(maxH > minH)) maxH = minH + 1;
+      return { minH, maxH, land: ui.land.value, shade: Number(ui.shade.value), cmap: ui.cmap.value, lut: buildLut(ui.cmap.value) };
+    }
+
+    let depthLayer;
+    function rebuildLayer() {
+      const s = settings();
+      const provider = new Cesium.UrlTemplateImageryProvider({
+        url: `${TILE_ROOT}/{z}/{x}/{y}.png`,     // not fetched directly; requestImage is replaced below
+        tilingScheme: new Cesium.GeographicTilingScheme(),
+        tileWidth: CELLS,
+        tileHeight: CELLS,
+        maximumLevel: MAX + 3,                    // render from upsampled heights for smoother close-ups
+        credit,
+      });
+      provider.requestImage = (x, y, level) => renderTile(x, y, level, s);
+
+      const index = depthLayer ? viewer.imageryLayers.indexOf(depthLayer) : undefined;
+      if (depthLayer) viewer.imageryLayers.remove(depthLayer, true);
+      depthLayer = viewer.imageryLayers.addImageryProvider(provider, index);
+      depthLayer.alpha = Number(ui.opacity.value);
+      depthLayer.show = ui.showDepth.checked;
+      updateLegend(s);
+    }
+
+    function updateLegend(s) {
+      const n = 16;
+      const grad = Array.from({ length: n + 1 }, (_, i) => {
+        const f = i / n;                          // 0 = top (shallow) … 1 = bottom (deep)
+        return `rgb(${COLORMAPS[s.cmap](1 - f).join(',')}) ${(f * 100).toFixed(1)}%`;
+      });
+      document.querySelector('#legend .bar').style.background = `linear-gradient(to bottom, ${grad.join(', ')})`;
+      document.querySelector('#legend .labels').innerHTML = [0, 0.25, 0.5, 0.75, 1]
+        .map((f) => `<span>${Math.round(s.maxH - f * (s.maxH - s.minH))} m</span>`).join('');
+    }
+
+    let pending;
+    const scheduleRebuild = () => { clearTimeout(pending); pending = setTimeout(rebuildLayer, 250); };
+
+    ui.preset.addEventListener('change', () => {
+      if (ui.preset.value === 'custom') return;
+      [ui.minH.value, ui.maxH.value] = ui.preset.value.split(',');
+      rebuildLayer();
+    });
+    for (const el of [ui.minH, ui.maxH]) el.addEventListener('input', () => { ui.preset.value = 'custom'; scheduleRebuild(); });
+    for (const el of [ui.cmap, ui.land]) el.addEventListener('change', rebuildLayer);
+    ui.shade.addEventListener('input', scheduleRebuild);
+    ui.opacity.addEventListener('input', () => { depthLayer.alpha = Number(ui.opacity.value); });
+    ui.showDepth.addEventListener('change', () => { depthLayer.show = ui.showDepth.checked; });
+    ui.exag.addEventListener('input', () => {
+      scene.verticalExaggeration = Number(ui.exag.value);
+      ui.exagVal.textContent = `${ui.exag.value}×`;
+    });
+
+    rebuildLayer();
+
+    // ---- Click query --------------------------------------------------------------------------
+    const info = document.getElementById('info');
+    new Cesium.ScreenSpaceEventHandler(scene.canvas).setInputAction(async (click) => {
+      const cartesian = scene.globe.pick(viewer.camera.getPickRay(click.position), scene);
+      if (!cartesian) { info.style.display = 'none'; return; }
+      const carto = Cesium.Cartographic.fromCartesian(cartesian);
+      const lon = Cesium.Math.toDegrees(carto.longitude), lat = Cesium.Math.toDegrees(carto.latitude);
+      const where = `Lat ${lat.toFixed(4)}°, Lon ${lon.toFixed(4)}°`;
+      info.style.display = 'block';
+      info.innerHTML = `${where}<br>Querying…`;
+      try {
+        const h = await heightAt(lon, lat);
+        info.innerHTML = `${where}<br>` + (h < 0 ? `Depth <b>${(-h).toFixed(0)} m</b>` : `Elevation <b>${h.toFixed(0)} m</b>`) +
+          `<br><span style="color:#aaa">GEBCO grid value, ~20″ resolution</span>`;
+      } catch (err) {
+        info.innerHTML = `${where}<br>Height lookup failed: ${err.message}`;
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    // Start with a whole-Atlantic view.
+    viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(-35.0, 20.0, 12000000) });
+  </script>
+</body>
+</html>

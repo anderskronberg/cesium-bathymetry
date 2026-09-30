@@ -1,0 +1,19 @@
+# Local config with the Cesium ion access token (template: config.example.js)
+# Dedicated Github Pages token added, allow upload of config.js
+# config.js
+
+
+# Local config with the Cesium ion access token (template: config.example.js)
+config.js
+
+# GEBCO source data (large GeoTIFFs, download from gebco.net)
+gebco_2026_tid_geotiff/
+gebco_2026_sub_ice_topo_geotiff/
+
+# Generated tiles (~2.6 GB, 185k files) - rebuild with build_tid_tiles.py / build_topo_tiles.py
+# Upload the tiles
+# tiles/
+
+# Python
+.venv/
+__pycache__/

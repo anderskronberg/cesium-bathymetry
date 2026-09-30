@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEBCO 2026 TID</title>
+  <!-- Include the CesiumJS JavaScript and CSS files -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.145/Build/Cesium/Cesium.js"></script>
+  <!-- Local config with the Cesium ion token (git-ignored, copy from config.example.js) -->
+  <script src="config.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.145/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    .panel {
+      position: absolute; padding: 8px 10px; background: rgba(30, 30, 30, 0.85);
+      color: #fff; font: 12px sans-serif; border-radius: 4px;
+    }
+    #legend { top: 50px; left: 10px; max-height: calc(100% - 140px); overflow-y: auto; width: 250px; }
+    #legend h3 { margin: 0 0 6px; font-size: 13px; }
+    #legend h4 { margin: 8px 0 3px; font-size: 11px; color: #bbb; text-transform: uppercase; letter-spacing: 0.04em; }
+    #legend .row { display: flex; align-items: center; gap: 6px; line-height: 17px; }
+    #legend .sw { width: 14px; height: 12px; flex: none; border: 1px solid rgba(255,255,255,0.3); }
+    #legend .controls { margin-top: 10px; border-top: 1px solid #555; padding-top: 8px; display: grid; gap: 6px; }
+    #legend label { display: flex; align-items: center; gap: 6px; }
+    #legend input[type=range] { flex: 1; }
+    #legend .note { color: #aaa; font-size: 11px; margin-top: 6px; }
+    #info { bottom: 40px; left: 10px; min-width: 250px; display: none; }
+    #info b { color: #9cf; }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <div id="legend" class="panel">
+    <h3>GEBCO 2026 – Type Identifier (TID)</h3>
+    <div id="classes"></div>
+    <div class="controls">
+      <label><input type="checkbox" id="showTid" checked> Show TID layer</label>
+      <label>Opacity <input type="range" id="opacity" min="0" max="1" step="0.05" value="0.85"><span id="opacityVal">0.85</span></label>
+      <label>Vertical exag. <input type="range" id="exag" min="1" max="20" step="1" value="3"><span id="exagVal">3×</span></label>
+    </div>
+    <div class="note" id="terrainStatus">Terrain: loading…</div>
+    <div class="note">Click the globe to query the source type. Land is transparent.</div>
+  </div>
+  <div id="info" class="panel"></div>
+  <script type="module">
+    // Cesium ion token comes from config.js (not in git) - see README.md.
+    if (!window.CESIUM_ION_TOKEN) alert('Missing config.js with CESIUM_ION_TOKEN - see README.md.');
+    Cesium.Ion.defaultAccessToken = window.CESIUM_ION_TOKEN;
+
+    // Tiles are generated from gebco_2026_tid_geotiff/ by build_tid_tiles.py.
+    const TILE_ROOT = 'tiles/gebco_tid';
+    const meta = await (await fetch(`${TILE_ROOT}/meta.json`)).json();
+
+    // Seabed relief: Cesium World Bathymetry (ion asset 2426648); falls back to World Terrain
+    // if the asset is not available on this ion account.
+    const terrainStatus = document.getElementById('terrainStatus');
+    const bathymetry = new Cesium.Terrain(
+      Cesium.CesiumTerrainProvider.fromIonAssetId(2426648, { requestVertexNormals: true }),
+    );
+    bathymetry.readyEvent.addEventListener(() => { terrainStatus.textContent = 'Terrain: Cesium World Bathymetry'; });
+    bathymetry.errorEvent.addEventListener((error) => {
+      console.warn('World Bathymetry unavailable, falling back to World Terrain:', error);
+      terrainStatus.textContent = 'Terrain: Cesium World Terrain (no bathymetry)';
+      viewer.scene.setTerrain(Cesium.Terrain.fromWorldTerrain());
+    });
+
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      terrain: bathymetry,
+      baseLayerPicker: true,
+    });
+    const scene = viewer.scene;
+    scene.verticalExaggeration = 3.0;
+    scene.screenSpaceCameraController.enableCollisionDetection = true;
+
+    // ---- TID imagery layer --------------------------------------------------------------------
+    // Availability bitmasks: tiles that are only land/nodata were not written, so serve a blank
+    // tile for those instead of letting the request 404.
+    const availability = Object.fromEntries(Object.entries(meta.available).map(
+      ([level, b64]) => [level, Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))],
+    ));
+    const hasTile = (x, y, level) => {
+      const bits = availability[level];
+      if (!bits) return false;
+      const i = y * 2 ** (level + 1) + x;
+      return ((bits[i >> 3] >> (i & 7)) & 1) === 1;
+    };
+    const blankTile = document.createElement('canvas');
+    blankTile.width = blankTile.height = meta.tileSize;
+
+    const tidProvider = new Cesium.UrlTemplateImageryProvider({
+      url: `${TILE_ROOT}/{z}/{x}/{y}.png`,
+      tilingScheme: new Cesium.GeographicTilingScheme(),
+      tileWidth: meta.tileSize,
+      tileHeight: meta.tileSize,
+      minimumLevel: 0,
+      maximumLevel: meta.maxLevel,
+      credit: new Cesium.Credit(meta.attribution),
+    });
+    const requestImage = tidProvider.requestImage.bind(tidProvider);
+    tidProvider.requestImage = (x, y, level, request) =>
+      hasTile(x, y, level) ? requestImage(x, y, level, request) : Promise.resolve(blankTile);
+
+    const tidLayer = viewer.imageryLayers.addImageryProvider(tidProvider);
+    tidLayer.alpha = 0.85;
+    // Categorical data: never blend neighbouring classes when magnifying.
+    tidLayer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
+    tidLayer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
+
+    // ---- Legend and controls ------------------------------------------------------------------
+    const classesEl = document.getElementById('classes');
+    for (const group of meta.groups) {
+      const h = document.createElement('h4');
+      h.textContent = group.name;
+      classesEl.appendChild(h);
+      for (const code of group.codes) {
+        const cls = meta.classes[code];
+        if (!cls) continue;
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `<span class="sw" style="background:${cls.color}"></span><span>${code} – ${cls.label}</span>`;
+        classesEl.appendChild(row);
+      }
+    }
+
+    const opacity = document.getElementById('opacity');
+    opacity.addEventListener('input', () => {
+      tidLayer.alpha = Number(opacity.value);
+      document.getElementById('opacityVal').textContent = Number(opacity.value).toFixed(2);
+    });
+    document.getElementById('showTid').addEventListener('change', (e) => { tidLayer.show = e.target.checked; });
+    const exag = document.getElementById('exag');
+    exag.addEventListener('input', () => {
+      scene.verticalExaggeration = Number(exag.value);
+      document.getElementById('exagVal').textContent = `${exag.value}×`;
+    });
+
+    // ---- Click query: read the TID code from the full-resolution tile ------------------------
+    const colorToCode = new Map(Object.entries(meta.classes).map(([code, c]) => [c.color.toLowerCase(), Number(code)]));
+    const toHex = (r, g, b) => '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+    const tileCache = new Map();
+
+    async function tilePixels(level, x, y) {
+      const key = `${level}/${x}/${y}`;
+      if (!tileCache.has(key)) {
+        tileCache.set(key, (async () => {
+          const img = new Image();
+          img.src = `${TILE_ROOT}/${key}.png`;
+          await img.decode();
+          const c = document.createElement('canvas');
+          c.width = img.width; c.height = img.height;
+          const ctx = c.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(img, 0, 0);
+          return ctx.getImageData(0, 0, c.width, c.height);
+        })());
+      }
+      return tileCache.get(key);
+    }
+
+    async function queryTid(lon, lat) {
+      const level = meta.maxLevel;
+      const span = 180 / 2 ** level;
+      const fx = (lon + 180) / span, fy = (90 - lat) / span;
+      const x = Math.floor(fx), y = Math.floor(fy);
+      if (!hasTile(x, y, level)) return { code: 0, label: 'Land / no data' };
+      const px = Math.min(meta.tileSize - 1, Math.floor((fx - x) * meta.tileSize));
+      const py = Math.min(meta.tileSize - 1, Math.floor((fy - y) * meta.tileSize));
+      const data = await tilePixels(level, x, y);
+      const i = (py * data.width + px) * 4;
+      if (data.data[i + 3] === 0) return { code: 0, label: 'Land / no data' };
+      const code = colorToCode.get(toHex(data.data[i], data.data[i + 1], data.data[i + 2]));
+      return code === undefined ? { code: '?', label: 'Undocumented code' } : { code, label: meta.classes[code].label };
+    }
+
+    const info = document.getElementById('info');
+    new Cesium.ScreenSpaceEventHandler(scene.canvas).setInputAction(async (click) => {
+      const ray = viewer.camera.getPickRay(click.position);
+      const cartesian = scene.globe.pick(ray, scene);
+      if (!cartesian) { info.style.display = 'none'; return; }
+      const carto = Cesium.Cartographic.fromCartesian(cartesian);
+      const lon = Cesium.Math.toDegrees(carto.longitude), lat = Cesium.Math.toDegrees(carto.latitude);
+      // globe.pick returns the exaggerated surface; undo it to get the terrain height.
+      const height = carto.height / scene.verticalExaggeration;
+      info.style.display = 'block';
+      info.innerHTML = `Lat ${lat.toFixed(4)}°, Lon ${lon.toFixed(4)}°<br>Querying…`;
+      try {
+        const tid = await queryTid(lon, lat);
+        info.innerHTML = `Lat ${lat.toFixed(4)}°, Lon ${lon.toFixed(4)}°<br>` +
+          `Terrain height ≈ ${height.toFixed(0)} m<br>` +
+          `TID <b>${tid.code}</b> – ${tid.label}`;
+      } catch (err) {
+        info.innerHTML = `Lat ${lat.toFixed(4)}°, Lon ${lon.toFixed(4)}°<br>TID lookup failed: ${err.message}`;
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    // Start with a whole-Atlantic view.
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(-35.0, 20.0, 12000000),
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Include the CesiumJS JavaScript and CSS files -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.145/Build/Cesium/Cesium.js"></script>
+  <!-- Local config with the Cesium ion token (git-ignored, copy from config.example.js) -->
+  <script src="config.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.145/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    #legend {
+      position: absolute; top: 50px; left: 10px; padding: 8px 10px;
+      display: grid; grid-template-columns: 18px auto; column-gap: 8px;
+      background: rgba(30, 30, 30, 0.8); color: #fff; font: 12px sans-serif; border-radius: 4px;
+    }
+    #legend .title { grid-column: 1 / 3; margin-bottom: 6px; font-weight: bold; }
+    #legend .bar { grid-row: 2; height: 240px; }
+    #legend .labels { grid-row: 2; display: flex; flex-direction: column; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <div id="legend">
+    <div class="title">Depth</div>
+    <div class="bar"></div>
+    <div class="labels"><span class="top"></span><span class="mid"></span><span class="bottom"></span></div>
+  </div>
+  <script type="module">
+    // Cesium ion token comes from config.js (not in git) - see README.md.
+    if (!window.CESIUM_ION_TOKEN) alert('Missing config.js with CESIUM_ION_TOKEN - see README.md.');
+    Cesium.Ion.defaultAccessToken = window.CESIUM_ION_TOKEN;
+
+    // Barbados bathymetry terrain (Cesium ion asset 5962441).
+    // Vertex normals are needed for hillshading of the seabed.
+    const bathymetry = new Cesium.Terrain(
+      Cesium.CesiumTerrainProvider.fromIonAssetId(5962441, {
+        requestVertexNormals: true,
+      }),
+    );
+    bathymetry.errorEvent.addEventListener((error) => {
+      console.error('Failed to load bathymetry terrain:', error);
+    });
+
+    // Initialize the Cesium Viewer in the HTML element with the `cesiumContainer` ID.
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      terrain: bathymetry,
+    });
+
+    const scene = viewer.scene;
+    const globe = scene.globe;
+
+    // Lighting gives relief shading; fix the clock at local midday (UTC-4) so the sun is up.
+    globe.enableLighting = true;
+    viewer.clock.currentTime = Cesium.JulianDate.fromIso8601('2026-06-21T16:00:00Z');
+    viewer.clock.shouldAnimate = false;
+
+    // Exaggerate vertical relief so seabed features stand out (1.0 = true scale).
+    scene.verticalExaggeration = 3.0;
+
+    // Colour the globe by depth with an inverted Turbo ramp (deep = dark red, shallow = dark blue).
+    // Heights outside [minHeight, maxHeight] are clamped to the end colours.
+    const minHeight = -1000.0; // m, deepest end of the ramp
+    const maxHeight = 0.0;    // m, shallowest end of the ramp
+
+    // Turbo colormap, polynomial approximation (Mikhailov, Google AI 2019). t in 0..1 -> [r, g, b] 0..255.
+    function turbo(t) {
+      t = Cesium.Math.clamp(t, 0.0, 1.0);
+      const t2 = t * t, t3 = t2 * t, t4 = t3 * t, t5 = t4 * t;
+      const r = 0.13572138 + 4.61539260 * t - 42.66032258 * t2 + 132.13108234 * t3 - 152.94239396 * t4 + 59.28637943 * t5;
+      const g = 0.09140261 + 2.19418839 * t + 4.84296658 * t2 - 14.18503333 * t3 + 4.27729857 * t4 + 2.82956604 * t5;
+      const b = 0.10667330 + 12.64194608 * t - 60.58204836 * t2 + 110.36276771 * t3 - 89.90310912 * t4 + 27.34824973 * t5;
+      return [r, g, b].map((c) => Math.round(Cesium.Math.clamp(c, 0.0, 1.0) * 255));
+    }
+
+    function createElevationRamp() {
+      const width = 512;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(width, 1);
+      for (let i = 0; i < width; i++) {
+        // Ramp x=0 is minHeight (deepest); inverted so deepest gets Turbo's red end.
+        const [r, g, b] = turbo(1.0 - i / (width - 1));
+        img.data.set([r, g, b, 255], i * 4);
+      }
+      ctx.putImageData(img, 0, 0);
+      return canvas;
+    }
+    const ramp = createElevationRamp();
+    globe.material = Cesium.Material.fromType('ElevationRamp', {
+      image: ramp,
+      minimumHeight: minHeight,
+      maximumHeight: maxHeight,
+    });
+
+    // Depth legend: vertical colour bar, shallow at top, deep at bottom.
+    const legend = document.getElementById('legend');
+    const stops = Array.from({ length: 17 }, (_, i) => {
+      const f = i / 16; // 0 = top (shallow), 1 = bottom (deep)
+      return `rgb(${turbo(f).join(',')}) ${(f * 100).toFixed(1)}%`;
+    });
+    legend.querySelector('.bar').style.background = `linear-gradient(to bottom, ${stops.join(', ')})`;
+    legend.querySelector('.top').textContent = `${maxHeight} m`;
+    legend.querySelector('.mid').textContent = `${Math.round((minHeight + maxHeight) / 2)} m`;
+    legend.querySelector('.bottom').textContent = `${minHeight} m`;
+
+    // Keep the camera from going below the seabed.
+    scene.screenSpaceCameraController.enableCollisionDetection = true;
+
+    // Fly the camera to Barbados, looking north from offshore to the south.
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(-59.55, 12.55, 45000),
+      orientation: {
+        heading: Cesium.Math.toRadians(0.0),
+        pitch: Cesium.Math.toRadians(-40.0),
+      },
+    });
+  </script>
+</body>
+</html>
