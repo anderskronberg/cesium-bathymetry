@@ -1,0 +1,2 @@
+// Token only for GitHub Pages demo, not for production use. Get your own at https://cesium.com/ion/tokens.
+//window.CESIUM_ION_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6IjJRUk95a3BIYjVSNV9Gd0ciLCJqdGkiOiJlNGU4MzRmMy0yZTg1LTQyZDUtYTY5Yi1lMDUzYTc2ZmMzYTMiLCJpZCI6NTExNjA0LCJpc3MiOiJodHRwczovL2FwaS5jZXNpdW0uY29tIiwiYXVkIjoidW5kZWZpbmVkX2RlZmF1bHQiLCJpYXQiOjE3OTA3MTMyMDJ9.wiFqbwt-UT-aaToFUEfQts61_vev8bRA6s4LAXHMVc4';
