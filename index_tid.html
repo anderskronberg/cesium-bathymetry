@@ -23,6 +23,7 @@
     #legend label { display: flex; align-items: center; gap: 6px; }
     #legend input[type=range] { flex: 1; }
     #legend .note { color: #aaa; font-size: 11px; margin-top: 6px; }
+    #legend .note.warn { color: #f96; }
     #info { bottom: 40px; left: 10px; min-width: 250px; display: none; }
     #info b { color: #9cf; }
   </style>
@@ -38,6 +39,7 @@
       <label>Vertical exag. <input type="range" id="exag" min="1" max="20" step="1" value="3"><span id="exagVal">3×</span></label>
     </div>
     <div class="note" id="terrainStatus">Terrain: loading…</div>
+    <div class="note warn" id="imageryStatus" hidden></div>
     <div class="note">Click the globe to query the source type. Land is transparent.</div>
   </div>
   <div id="info" class="panel"></div>
@@ -51,7 +53,9 @@
     const meta = await (await fetch(`${TILE_ROOT}/meta.json`)).json();
 
     // Seabed relief: Cesium World Bathymetry (ion asset 2426648); falls back to World Terrain
-    // if the asset is not available on this ion account.
+    // if the asset is not available on this ion account. If both fail (typically an invalid
+    // token, or one without access to the assets) say so instead of showing an empty globe.
+    const ION_HINT = 'check the Cesium ion token in config.js and its asset access (see README.md).';
     const terrainStatus = document.getElementById('terrainStatus');
     const bathymetry = new Cesium.Terrain(
       Cesium.CesiumTerrainProvider.fromIonAssetId(2426648, { requestVertexNormals: true }),
@@ -59,13 +63,28 @@
     bathymetry.readyEvent.addEventListener(() => { terrainStatus.textContent = 'Terrain: Cesium World Bathymetry'; });
     bathymetry.errorEvent.addEventListener((error) => {
       console.warn('World Bathymetry unavailable, falling back to World Terrain:', error);
-      terrainStatus.textContent = 'Terrain: Cesium World Terrain (no bathymetry)';
-      viewer.scene.setTerrain(Cesium.Terrain.fromWorldTerrain());
+      terrainStatus.textContent = 'Terrain: bathymetry unavailable, trying World Terrain…';
+      const worldTerrain = Cesium.Terrain.fromWorldTerrain();
+      worldTerrain.readyEvent.addEventListener(() => {
+        terrainStatus.textContent = 'Terrain: Cesium World Terrain (no bathymetry)';
+      });
+      worldTerrain.errorEvent.addEventListener((err) => {
+        console.error('World Terrain unavailable:', err);
+        terrainStatus.textContent = `Terrain unavailable – ${ION_HINT}`;
+        terrainStatus.classList.add('warn');
+      });
+      viewer.scene.setTerrain(worldTerrain);
     });
 
     const viewer = new Cesium.Viewer('cesiumContainer', {
       terrain: bathymetry,
       baseLayerPicker: true,
+    });
+    const imageryStatus = document.getElementById('imageryStatus');
+    viewer.imageryLayers.get(0)?.errorEvent.addEventListener((error) => {
+      console.error('Base imagery unavailable:', error);
+      imageryStatus.textContent = `Base map unavailable – ${ION_HINT}`;
+      imageryStatus.hidden = false;
     });
     const scene = viewer.scene;
     scene.verticalExaggeration = 3.0;

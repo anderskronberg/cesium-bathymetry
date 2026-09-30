@@ -26,6 +26,7 @@
     #legend input[type=number] { width: 64px; }
     #legend select { flex: 1; }
     #legend .note { color: #aaa; font-size: 11px; margin-top: 8px; }
+    #legend .note.warn { color: #f96; }
     #info { bottom: 40px; left: 10px; min-width: 240px; display: none; }
     #info b { color: #9cf; }
   </style>
@@ -73,6 +74,7 @@
       <label><input type="checkbox" id="showDepth" checked> Show depth layer</label>
     </div>
     <div class="note">Terrain and colours are both from GEBCO_2026 (sub-ice version). Heights outside the range are clamped to the end colours. Click the globe to query the depth.</div>
+    <div class="note warn" id="imageryStatus" hidden></div>
   </div>
   <div id="info" class="panel"></div>
   <script type="module">
@@ -158,6 +160,14 @@
     });
 
     const viewer = new Cesium.Viewer('cesiumContainer', { terrainProvider });
+    // Terrain is local, but the default base map comes from Cesium ion; typically fails on an
+    // invalid token or one without access to the imagery asset.
+    const imageryStatus = document.getElementById('imageryStatus');
+    viewer.imageryLayers.get(0)?.errorEvent.addEventListener((error) => {
+      console.error('Base imagery unavailable:', error);
+      imageryStatus.textContent = 'Base map unavailable – check the Cesium ion token in config.js and its asset access (see README.md).';
+      imageryStatus.hidden = false;
+    });
     const scene = viewer.scene;
     scene.verticalExaggeration = 3.0;
     scene.globe.depthTestAgainstTerrain = true;

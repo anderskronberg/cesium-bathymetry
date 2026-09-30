@@ -2,7 +2,6 @@
 # Dedicated Github Pages token added, allow upload of config.js
 # config.js
 
-
 # Local config with the Cesium ion access token (template: config.example.js)
 config.js
 
@@ -12,25 +11,23 @@ gebco_2026_sub_ice_topo_geotiff/
 
 # Generated tiles (~2.6 GB, 185k files) - rebuild with build_tid_tiles.py / build_topo_tiles.py
 # Upload the tiles
-tiles/tiles_topo/0/
-tiles/tiles_topo/1/
-tiles/tiles_topo/2/
-tiles/tiles_topo/3/
-tiles/tiles_topo/4/
-tiles/tiles_topo/5/
-tiles/tiles_topo/6/
-tiles/tiles_topo/7/
-tiles/tiles_topo/8/
-tiles/tiles_tid/0/
-tiles/tiles_tid/1/
-tiles/tiles_tid/2/
-tiles/tiles_tid/3/
-tiles/tiles_tid/4/
-tiles/tiles_tid/5/
-tiles/tiles_tid/6/
-tiles/tiles_tid/7/
-tiles/tiles_tid/8/
-
+tiles/gebco_topo/0/
+tiles/gebco_topo/1/
+tiles/gebco_topo/2/
+tiles/gebco_topo/3/
+tiles/gebco_topo/4/
+tiles/gebco_topo/5/
+tiles/gebco_topo/6/
+tiles/gebco_topo/7/
+tiles/gebco_tid/0/
+tiles/gebco_tid/1/
+tiles/gebco_tid/2/
+tiles/gebco_tid/3/
+tiles/gebco_tid/4/
+tiles/gebco_tid/5/
+tiles/gebco_tid/6/
+tiles/gebco_tid/7/
+tiles/gebco_tid/8/
 
 # Python
 .venv/
