@@ -13,6 +13,17 @@ gebco_2026_sub_ice_topo_geotiff/
 # Generated tiles (~2.6 GB, 185k files) - rebuild with build_tid_tiles.py / build_topo_tiles.py
 # Upload the tiles
 # tiles/
+tiles/tiles_topo
+tiles/tiles_tid/0
+tiles/tiles_tid/1
+tiles/tiles_tid/2
+tiles/tiles_tid/3
+tiles/tiles_tid/4
+tiles/tiles_tid/5
+tiles/tiles_tid/6
+tiles/tiles_tid/7
+tiles/tiles_tid/8
+
 
 # Python
 .venv/
