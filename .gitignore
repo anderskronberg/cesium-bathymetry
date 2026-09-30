@@ -1,6 +1,7 @@
 # Local config with the Cesium ion access token (template: config.example.js)
 # Dedicated Github Pages token added, allow upload of config.js
 # config.js
+config_private.js
 
 # GEBCO source data (large GeoTIFFs, download from gebco.net)
 gebco_2026_tid_geotiff/
