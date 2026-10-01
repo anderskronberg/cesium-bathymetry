@@ -15,7 +15,12 @@
       color: #fff; font: 12px sans-serif; border-radius: 4px;
     }
     #legend { top: 50px; left: 10px; width: 240px; max-height: calc(100% - 140px); overflow-y: auto; }
-    #legend h3 { margin: 0 0 8px; font-size: 13px; }
+    #legend h3 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; justify-content: space-between; }
+    #legend.collapsed { width: auto; }
+    #legend.collapsed h3 { margin: 0; }
+    #legend.collapsed #legendBody { display: none; }
+    #legendToggle { background: none; border: 1px solid #777; border-radius: 3px; color: #fff; font: 11px sans-serif; padding: 1px 6px; margin-left: 10px; cursor: pointer; }
+    #legendToggle:hover { background: rgba(255, 255, 255, 0.15); }
     #legend .scale { display: grid; grid-template-columns: 18px auto; column-gap: 8px; }
     #legend .bar { height: 220px; }
     #legend .labels { display: flex; flex-direction: column; justify-content: space-between; }
@@ -34,7 +39,8 @@
 <body>
   <div id="cesiumContainer"></div>
   <div id="legend" class="panel">
-    <h3>GEBCO 2026 – Depth</h3>
+    <h3>GEBCO 2026 – Depth <button id="legendToggle" type="button" title="Hide/show legend (L)">Hide</button></h3>
+    <div id="legendBody">
     <div class="scale">
       <div class="bar"></div>
       <div class="labels"></div>
@@ -75,8 +81,23 @@
     </div>
     <div class="note">Terrain and colours are both from GEBCO_2026 (sub-ice version). Heights outside the range are clamped to the end colours. Click the globe to query the depth.</div>
     <div class="note warn" id="imageryStatus" hidden></div>
+    </div>
   </div>
   <div id="info" class="panel"></div>
+  <script>
+    // Legend collapse toggle (button or "L" key). Plain script so it works before the tiles load.
+    const legendEl = document.getElementById('legend');
+    const legendBtn = document.getElementById('legendToggle');
+    function toggleLegend() {
+      const collapsed = legendEl.classList.toggle('collapsed');
+      legendBtn.textContent = collapsed ? 'Show' : 'Hide';
+    }
+    legendBtn.addEventListener('click', toggleLegend);
+    document.addEventListener('keydown', (e) => {
+      if ((e.key === 'l' || e.key === 'L') && !e.ctrlKey && !e.metaKey && !e.altKey
+          && !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) toggleLegend();
+    });
+  </script>
   <script type="module">
     // Cesium ion token comes from config.js (not in git) - see README.md.
     if (!window.CESIUM_ION_TOKEN) alert('Missing config.js with CESIUM_ION_TOKEN - see README.md.');

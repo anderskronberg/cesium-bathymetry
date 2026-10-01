@@ -8,17 +8,25 @@
 
 ## 1. Cesium ion access token
 
-The pages need a Cesium ion access token (base maps, `index.html` terrain). The token is **not** stored in the repository – use your own:
+The pages need a Cesium ion access token (base maps, `index.html` terrain). The repository includes a `config.js` with a public demo token intended for the GitHub Pages deployment. It is not meant for production or other deployments, and it may be revoked or restricted at any time.
+
+To use your own token instead:
 
 1. Create a free account at https://ion.cesium.com and copy a token from https://ion.cesium.com/tokens.
-2. Copy `config.example.js` to `config.js` in the project root.
-3. Replace `your_access_token` in `config.js` with your token.
+2. Replace the token in `config.js` with your own (`config.example.js` is a clean template).
+3. Do not commit your private token. To stop git from picking up your local change to `config.js`, run:
 
-`config.js` is listed in `.gitignore`, so it is never committed. Consider restricting the token to your own URLs in the ion dashboard.
+   ```
+   git update-index --skip-worktree config.js
+   ```
+
+Consider restricting your token to your own URLs in the ion dashboard.
 
 ## 2. GEBCO data and tiles
 
-The GEBCO GeoTIFFs and the generated tiles are not in the repository (several GB).
+The generated tiles are in the repository up to zoom level 7, for both `tiles/gebco_topo` and `tiles/gebco_tid` (~2.4 GB, ~80 000 files, so the clone is large). The pages work as soon as the repository is cloned.
+
+The GEBCO source GeoTIFFs are not in the repository. You only need them to rebuild the tiles, for example after changing the build scripts:
 
 1. Download the GEBCO_2026 Grid in GeoTIFF format from https://www.gebco.net/data-products/gridded-bathymetry-data:
    - sub-ice topography → extract to `gebco_2026_sub_ice_topo_geotiff/`
@@ -28,9 +36,11 @@ The GEBCO GeoTIFFs and the generated tiles are not in the repository (several GB
    ```
    python -m venv .venv
    .venv\Scripts\python -m pip install numpy pillow
-   .venv\Scripts\python build_topo_tiles.py    # -> tiles/gebco_topo  (~2 min, 2.2 GB)
-   .venv\Scripts\python build_tid_tiles.py     # -> tiles/gebco_tid   (~14 min, 0.4 GB)
+   .venv\Scripts\python build_topo_tiles.py    # -> tiles/gebco_topo  levels 0–7 (~2 min)
+   .venv\Scripts\python build_tid_tiles.py     # -> tiles/gebco_tid   levels 0–8 (~14 min)
    ```
+
+`build_tid_tiles.py` also builds level 8. That level is git-ignored, and the committed `tiles/gebco_tid/meta.json` sets `maxLevel` to 7. A rebuild writes `maxLevel: 8` to that file. Use the rebuilt file for local work with level 8, and do not commit it.
 
 ## 3. Run
 
